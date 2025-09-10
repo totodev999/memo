@@ -1,0 +1,101 @@
+import * as React from "react";
+import { TextField } from "@mui/material";
+import {
+  DataGrid,
+  GridToolbar,
+  GridFilterItem,
+  getGridStringOperators,
+  GridFilterOperator,
+  GridFilterModel,
+  GridColDef,
+} from "@mui/x-data-grid";
+import { useDataGrid } from "@refinedev/mui";
+
+/** 1) フィルタ入力: Enter確定・IME中はEnter無視 */
+function EnterOnlyTextFilter(props: {
+  item: GridFilterItem;
+  applyValue: (item: GridFilterItem) => void;
+  focusElementRef?: React.Ref<any>;
+}) {
+  const { item, applyValue, focusElementRef } = props;
+  const [val, setVal] = React.useState<string>((item.value as string) ?? "");
+  const composing = React.useRef(false);
+
+  return (
+    <TextField
+      inputRef={focusElementRef}
+      variant="standard"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onCompositionStart={() => (composing.current = true)}
+      onCompositionEnd={() => (composing.current = false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !composing.current) {
+          applyValue({ ...item, value: val.trim() || undefined });
+        }
+      }}
+      placeholder="Enterで確定（日本語OK）"
+      fullWidth
+    />
+  );
+}
+
+/** 2) 「contains(Enter)」という見た目の演算子。実際の評価は不要（server mode） */
+const containsEnterOperator: GridFilterOperator = {
+  label: "contains (Enter)",
+  value: "containsEnter",             // UI用の仮オペレーター名
+  getApplyFilterFn: () => null,       // server modeなのでクライアント評価は不要
+  InputComponent: EnterOnlyTextFilter // ここでEnter確定のみ適用
+};
+
+/** 3) 列定義（nameだけ例示） */
+const columns: GridColDef[] = [
+  {
+    field: "name",
+    headerName: "Name",
+    flex: 1,
+    filterable: true,
+    // 既存の文字列オペレーターを残すなら後ろに展開、完全にEnter確定だけにしたいなら [containsEnterOperator] にする
+    filterOperators: [containsEnterOperator, ...getGridStringOperators()],
+  },
+  // 他の列…
+];
+
+export function List() {
+  const { dataGridProps } = useDataGrid({
+    // refineの設定は普段どおり
+  });
+
+  // 4) DataGridが発火する filterModel から
+  //    UI用の 'containsEnter' をサーバー用の 'contains' に置換して refine 側へ渡す
+  const onFilterModelChange = React.useCallback(
+    (model: GridFilterModel) => {
+      const normalized: GridFilterModel = {
+        ...model,
+        items: model.items.map((it) =>
+          it.operator === "containsEnter" ? { ...it, operator: "contains" } : it
+        ),
+      };
+      // refine/useDataGrid が持っている本来のハンドラに渡す
+      dataGridProps.onFilterModelChange?.(normalized);
+    },
+    [dataGridProps]
+  );
+
+  return (
+    <DataGrid
+      {...dataGridProps}
+      columns={columns}
+      filterMode="server"
+      // フィルタUIは DataGrid 内部のものを使用（Filter パネル or ヘッダーメニュー）
+      slots={{ toolbar: GridToolbar }}
+      slotProps={{
+        toolbar: {
+          showQuickFilter: false, // Quick filterはIMEで即時反応するのでOFF推奨
+        },
+      }}
+      onFilterModelChange={onFilterModelChange}
+      autoHeight
+    />
+  );
+}
